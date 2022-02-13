@@ -10,8 +10,12 @@
 //Reads files from disk
 #include <LittleFS.h>
 
+#include <string.h>
+
 //Pin allows to force board to take input
 #define WiFiOverride 14
+
+#define zapPin D0
 
 ESP8266WebServer server(80);
 SocketIoClient webSocket;
@@ -27,6 +31,21 @@ char username[32];
 int id;
 //Tracks whether this is connected to the server
 bool isConnected = false;
+
+//The threshold for this 
+int scanThreshold = 0;
+
+int scanIndex = 0;
+int lastScans[] = {0, 0, 0, 0, 0};
+
+unsigned long lastLeft;
+bool shouldZap = false;
+
+//Room data
+#define roomSize 16
+int ids[roomSize];
+char names[roomSize][64];
+bool sending[roomSize];
 
 void setup() {
   // Begin serial
@@ -52,8 +71,10 @@ void setup() {
     username[i] = EEPROM.read(i + 160);
   }
   //ID
-  //EEPROM.write(193, 0); EEPROM.commit();
+  //EEPROM.write(193, 255); EEPROM.commit();
   id = EEPROM.read(193);
+  EEPROM.write(194, 63); EEPROM.commit();
+  scanThreshold = -1 * EEPROM.read(194);
 
   //Debug printing
   Serial.println(ssid);
@@ -61,11 +82,13 @@ void setup() {
   Serial.println(room);
   Serial.println(username);
   Serial.println(id);
+  Serial.println(scanThreshold);
 
   LittleFS.begin();
 
   //Pin all
   pinMode(WiFiOverride, INPUT_PULLUP);
+  pinMode(zapPin, OUTPUT);
 
   //Allow for overriding with the pin, forcing board to ask for SSID/Password
   if (digitalRead(WiFiOverride) != LOW) {
@@ -93,12 +116,17 @@ void setup() {
 
     webSocket.on("connect", handleConnected);
     webSocket.on("disconnect", handleDisconnected);
-    webSocket.on("shock", handleShockOn);
-    webSocket.on("deshock", handleShockOff);
+    webSocket.on("room", handleRoom);
     webSocket.begin("ec2-13-58-213-225.us-east-2.compute.amazonaws.com", 4098);
 
     server.on("/", hostRoot);
     server.begin();
+
+    if (scanThreshold > -30) {
+      WiFi.scanNetworksAsync(initialScan, true);
+    }
+    lastLeft = millis();
+    shouldZap = false;
   //If disconnected, give this thing its own web server and register handlers
   } else {
     Serial.println("\nNot connected...");
@@ -133,7 +161,28 @@ void serverLoop() {
 void clientLoop() {
   webSocket.loop();
   server.handleClient();
-  //Do GPS stuff and potentially shock
+  //Do WiFi stuff and potentially shock
+  if (WiFi.scanComplete() == -2) {
+    WiFi.scanNetworksAsync(onScan, true);
+  }
+  if (millis() - lastLeft > 30000 && !shouldZap) {
+    webSocket.emit("zap", (String("\"") + room + "," + id + "\"").c_str());
+    shouldZap = true;
+  }
+  if (millis() - lastLeft < 30000) {
+    if (shouldZap) {
+      webSocket.emit("unzap", (String("\"") + room + "," + id + "\"").c_str());
+    }
+    shouldZap = false;
+  }
+}
+
+void setThreshold() {
+  String numberString = server.arg("threshold");
+  scanThreshold = numberString.toInt();
+  EEPROM.write(194, -1 * scanThreshold);
+  EEPROM.commit();
+  server.send(200, "text/plain", "Success!");
 }
 
 void submit() {
@@ -185,21 +234,128 @@ void hostRoot() {
   file.close();
 }
 
-void handleConnected(const char* data, size_t length) {
+void handleConnected(const char* data, size_t lengthh) {
   Serial.println("Connected to ws");
   webSocket.emit("register", (String("\"") + room + "," + id + "," + username + "\"").c_str());
 }
 
-void handleDisconnected(const char* data, size_t length) {
+void handleDisconnected(const char* data, size_t lengthh) {
   Serial.println("Disconnected from ws");
   isConnected = false;
   setup();
 }
 
-void handleShockOff(const char* data, size_t length) {
-  Serial.println("I'm too weak...");
+void handleRoom(const char* data, size_t lengthh) {
+  Serial.println("Handling room");
+  char newData[lengthh + 4];
+  char* stringBuffer[roomSize];
+
+  Serial.println("Handling room 2");
+
+  strcpy(newData, data);
+
+  Serial.println("Handling room 3");
+  
+  stringBuffer[0] = strtok(newData, "\n");
+  for (int i = 1; i < roomSize; i++) {
+    stringBuffer[i] = strtok(NULL, "\n");
+  }
+
+  Serial.println("Handling room 4");
+  
+  for (int i = 0; i < roomSize; i++) {
+    Serial.println(i);
+    if (stringBuffer[i] == NULL) {
+      continue;
+    }
+    ids[i] = atoi(strtok(stringBuffer[i], "`"));
+    strcpy(names[i], strtok(NULL, "`"));
+    sending[i] = atoi(strtok(NULL, "`")) == 1;
+  }
+
+  Serial.println("Handling room 5");
+
+  bool found = false;
+  for (int i = 0; i < roomSize; i++) {
+    if (sending[i]) {
+      Serial.println("ZAP ZAP ZAP ZAP");
+      digitalWrite(zapPin, HIGH);
+      found = true;
+    }
+  }
+
+  Serial.println("Handling room 6");
+  
+  if (!found) {
+    Serial.println("No zap :(");
+    digitalWrite(zapPin, LOW);
+  }
+
+  Serial.println("Got room data:");
+  for (int i = 0; i < roomSize; i++) {
+    if (names[i] == NULL || strcmp(names[i], "") == 0) continue;
+    Serial.print(ids[i]);
+    Serial.print(" ");
+    Serial.print(names[i]);
+    Serial.print(" ");
+    Serial.println(sending[i]);
+  }
+
+  Serial.println("Handling room 7");
 }
 
-void handleShockOn(const char* data, size_t length) {
-  Serial.println("UNLIMITED POWER!!!");
+void initialScan(int n) {
+  Serial.println(n);
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == "Electric Boogie Beacon " + String(id)) {
+      Serial.println("Found beacon! Strength is as follows:");
+      scanThreshold = WiFi.RSSI(i) - 15;
+      if (scanThreshold > -50) {
+        scanThreshold = -50;
+      }
+      Serial.println(scanThreshold);
+      EEPROM.write(194, -1 * scanThreshold);
+      EEPROM.commit();
+    }
+  }
+  Serial.println("Scan finished for the first time");
+  WiFi.scanDelete();
+}
+
+void onScan(int n) {
+  bool found = false;
+  for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == "Electric Boogie Beacon " + String(id)) {
+      Serial.print("Found beacon! Strength is: ");
+      Serial.print(WiFi.RSSI(i));
+      Serial.print(" compared to the threshold of ");
+      Serial.println(scanThreshold);
+      lastScans[scanIndex] = WiFi.RSSI(i);
+      scanIndex++;
+      scanIndex = scanIndex % 5;
+      found = true;
+    }
+  }
+  if (!found) {
+    Serial.println("Adding threshold due to not finding");
+    lastScans[scanIndex] = scanThreshold - 1;
+    scanIndex++;
+    scanIndex = scanIndex % 5;
+  }
+  
+  int sum = 0;
+  for (int i = 0; i < 5; i++) {
+    sum += lastScans[i];
+  }
+
+  Serial.print("Sum is now: ");
+  Serial.print(sum);
+  Serial.print(" and threshold is ");
+  Serial.println(scanThreshold * 5);
+  
+  if (sum <= scanThreshold * 5) {
+    Serial.println("Resetting due to leaving");
+    lastLeft = millis();
+  }
+  WiFi.scanDelete();
 }
