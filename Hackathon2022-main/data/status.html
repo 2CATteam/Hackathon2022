@@ -102,12 +102,16 @@ label {
 </template>
 
 <script>
+	//Get the name from the server
 	httpGetAsync("/getName", renderName)
+	//Periodically get the room status
 	httpGetAsync("/connections", renderCards)
 	setInterval(httpGetAsync.bind(null, "/connections", renderCards), 10000)
-	
+
+	//Track changes
 	let lastRoom = ""
 
+	//Performs a get request
 	//https://stackoverflow.com/questions/247483/http-get-request-in-javascript
 	function httpGetAsync(url, callback)
 	{
@@ -124,28 +128,37 @@ label {
 		document.querySelector("#roomName").innerHTML = response
 	}
 	
+	//Update based on room status
 	function renderCards(response) {
+		//Do nothing if no changes
 		if (response == lastRoom) return
 		lastRoom = response
 		let parent = document.querySelector(".cards")
+		//Remove all children
 		//https://www.javascripttutorial.net/dom/manipulating/remove-all-child-nodes/
 		while (parent.firstChild) {
 			parent.removeChild(parent.firstChild)
 		}
+		//For each row
 		let rows = response.split("\n")
 		for (let i in rows) {
+			//Parse data
 			let data = rows[i].split("`")
+			//If they have a name
 			if (data[1] && data[1] != "") {
+				//Clone the template and set the values
 				//https://developer.mozilla.org/en-US/docs/Web/HTML/Element/template
 				let clone = document.querySelector(i % 2 ? ".cardTemplate" : ".cardTemplate2").content.cloneNode(true)
 				clone.querySelector("h1").innerHTML = data[1]
 				clone.querySelector("button").innerHTML = data[2] == "0" ? "Moving" : "ZAP"
 				clone.querySelector("button").style.backgroundColor = data[2] == "0" ? "#008" : "#800"
+				//Add the clone to the parent
 				parent.appendChild(clone)
 			}
 		}
 	}
 	
+	//Button function just sends a get request
 	function changeSensitivity() {
 		httpGetAsync(`/threshold?threshold=${document.querySelector("input").value}`, console.log)
 	}
