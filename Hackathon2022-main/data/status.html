@@ -1,0 +1,155 @@
+<html>
+<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+<style>
+.card {
+  box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
+  max-width: 300px;
+  float:left;
+  margin: 8px;
+  text-align: center;
+  font-family: arial;
+  vertical-align: middle;
+
+}
+
+.cards{
+  margin: 1rem;
+  padding: 2rem 2rem;
+  text-align: center;
+}
+
+.title {
+  color: white;
+  font-size: 18px;
+}
+
+button {
+  border: none;
+  outline: 0;
+  display: inline-block;
+  padding: 8px;
+  color: white;
+  background-color: #000;
+  text-align: center;
+  cursor: pointer;
+  width: 100%;
+  font-size: 18px;
+  margin-top: 10px;
+}
+
+a {
+  text-decoration: none;
+  font-size: 22px;
+  color: black;
+}
+
+button:hover, a:hover {
+  opacity: 0.7;
+}
+
+.float-cards {
+    border: 3px solid #fff;
+    padding: 20px;
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	flex-align: center;
+	background-color: #222;
+	align-items: center;
+}
+
+label {
+	color: white;
+}
+
+
+</style>
+</head>
+<body>
+
+<h2 style="text-align:center;color:white" id="roomName">Name of Room</h2>
+<label for="input">Input Sensitivity
+  	 <input type = "number" min = "-120" max = "0" step = "1" value = "-60"> <button class="btn btn-primary" onclick="changeSensitivity()">Submit</button></label><br/>
+
+<div class = "cards"></div>
+
+<template class="cardTemplate">
+<div class="card">
+  <img src= "https://i.imgur.com/AJhhBqN.jpg" alt="Jane" style="width:100%">
+  <h1>Jane Doe</h1>
+ 
+  
+  <p><button>Save</button></p>
+</div>
+</div>
+</template>
+<template class="cardTemplate2">
+<div class="card">
+  <img src= "https://i.imgur.com/xKCUzh6.jpg" alt="Jane" style="width:100%">
+  <h1>Jane Doe</h1>
+ 
+  
+  <p><button>Save</button></p>
+</div>
+</div>
+</template>
+
+<script>
+	httpGetAsync("/getName", renderName)
+	httpGetAsync("/connections", renderCards)
+	setInterval(httpGetAsync.bind(null, "/connections", renderCards), 10000)
+	
+	let lastRoom = ""
+
+	//https://stackoverflow.com/questions/247483/http-get-request-in-javascript
+	function httpGetAsync(url, callback)
+	{
+		var xmlHttp = new XMLHttpRequest();
+		xmlHttp.onreadystatechange = function(cb) { 
+			if (xmlHttp.readyState == 4 && xmlHttp.status == 200)
+				cb(xmlHttp.responseText);
+		}.bind(null, callback)
+		xmlHttp.open("GET", url, true); // true for asynchronous 
+		xmlHttp.send();
+	}
+	
+	function renderName(response) {
+		document.querySelector("#roomName").innerHTML = response
+	}
+	
+	function renderCards(response) {
+		if (response == lastRoom) return
+		lastRoom = response
+		let parent = document.querySelector(".cards")
+		//https://www.javascripttutorial.net/dom/manipulating/remove-all-child-nodes/
+		while (parent.firstChild) {
+			parent.removeChild(parent.firstChild)
+		}
+		let rows = response.split("\n")
+		for (let i in rows) {
+			let data = rows[i].split("`")
+			if (data[1] && data[1] != "") {
+				//https://developer.mozilla.org/en-US/docs/Web/HTML/Element/template
+				let clone = document.querySelector(i % 2 ? ".cardTemplate" : ".cardTemplate2").content.cloneNode(true)
+				clone.querySelector("h1").innerHTML = data[1]
+				clone.querySelector("button").innerHTML = data[2] == "0" ? "Moving" : "ZAP"
+				clone.querySelector("button").style.backgroundColor = data[2] == "0" ? "#008" : "#800"
+				parent.appendChild(clone)
+			}
+		}
+	}
+	
+	function changeSensitivity() {
+		httpGetAsync(`/threshold?threshold=${document.querySelector("input").value}`, console.log)
+	}
+</script>
+
+</body>
+</html>

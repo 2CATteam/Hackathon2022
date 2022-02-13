@@ -39,6 +39,7 @@ int scanIndex = 0;
 int lastScans[] = {0, 0, 0, 0, 0};
 
 unsigned long lastLeft;
+unsigned long lastEmission;
 bool shouldZap = false;
 
 //Room data
@@ -51,6 +52,9 @@ void setup() {
   // Begin serial
   Serial.begin(115200);
   Serial.println("Starting");
+
+  pinMode(zapPin, OUTPUT);
+  digitalWrite(zapPin, LOW);
 
   //Read values from EEPROM and put them into memory
   EEPROM.begin(256);
@@ -73,7 +77,7 @@ void setup() {
   //ID
   //EEPROM.write(193, 255); EEPROM.commit();
   id = EEPROM.read(193);
-  EEPROM.write(194, 63); EEPROM.commit();
+  //EEPROM.write(194, 63); EEPROM.commit();
   scanThreshold = -1 * EEPROM.read(194);
 
   //Debug printing
@@ -88,12 +92,11 @@ void setup() {
 
   //Pin all
   pinMode(WiFiOverride, INPUT_PULLUP);
-  pinMode(zapPin, OUTPUT);
 
   //Allow for overriding with the pin, forcing board to ask for SSID/Password
   if (digitalRead(WiFiOverride) != LOW) {
     //Go into client mode and try to connect
-    WiFi.mode(WIFI_STA);
+    WiFi.mode(WIFI_AP_STA);
     WiFi.begin(ssid, password);
     //Wait until we're connected, and if it takes too long (>10 seconds), give up
     int attempts = 0;
@@ -112,20 +115,30 @@ void setup() {
   }
   //If we're connected, connect to the server and register event handlers
   if (isConnected) {
-    Serial.println("Connected!");
+    Serial.print("Connected! IP is: ");
+    Serial.println(WiFi.localIP());
+
+    /*IPAddress ip(192, 168, 0, 1);
+    WiFi.softAPConfig(ip, ip, IPAddress(255, 255, 255, 0));
+    Serial.println("Electric Boogie " + String(id));
+    WiFi.softAP("Electric Boogie " + String(id));*/
+
+    server.on("/", hostRoot);
+    server.on("/getName", hostName);
+    server.on("/connections", hostConnections);
+    server.on("/threshold", setThreshold);
+    server.begin();
 
     webSocket.on("connect", handleConnected);
     webSocket.on("disconnect", handleDisconnected);
     webSocket.on("room", handleRoom);
     webSocket.begin("ec2-13-58-213-225.us-east-2.compute.amazonaws.com", 4098);
 
-    server.on("/", hostRoot);
-    server.begin();
-
     if (scanThreshold > -30) {
       WiFi.scanNetworksAsync(initialScan, true);
     }
     lastLeft = millis();
+    lastEmission = millis();
     shouldZap = false;
   //If disconnected, give this thing its own web server and register handlers
   } else {
@@ -169,9 +182,13 @@ void clientLoop() {
     webSocket.emit("zap", (String("\"") + room + "," + id + "\"").c_str());
     shouldZap = true;
   }
+  if (millis() - lastLeft > 40000 && digitalRead(zapPin) == LOW) {
+    webSocket.emit("zap", (String("\"") + room + "," + id + "\"").c_str());
+  }
   if (millis() - lastLeft < 30000) {
-    if (shouldZap) {
+    if (digitalRead(zapPin) == HIGH && millis() - lastEmission > 10000) {
       webSocket.emit("unzap", (String("\"") + room + "," + id + "\"").c_str());
+      lastEmission = millis();
     }
     shouldZap = false;
   }
@@ -229,9 +246,28 @@ void clientRoot() {
 }
 
 void hostRoot() {
-  File file = LittleFS.open("setup.html", "r");
-  server.streamFile(file, "tet/html");
+  File file = LittleFS.open("status.html", "r");
+  server.streamFile(file, "text/html");
   file.close();
+}
+
+void hostName() {
+  //Serial.println(room);
+  server.send(200, "text/plain", room);
+}
+
+void hostConnections() {
+  String toSend = "";
+  for (int i = 0; i < roomSize; i++) {
+    toSend.concat(ids[i]);
+    toSend.concat("`");
+    toSend.concat(names[i]);
+    toSend.concat("`");
+    toSend.concat(sending[i] ? 1 : 0);
+    toSend.concat("\n");
+  }
+  //Serial.println(toSend);
+  server.send(200, "text/plain", toSend.c_str());
 }
 
 void handleConnected(const char* data, size_t lengthh) {
@@ -247,24 +283,18 @@ void handleDisconnected(const char* data, size_t lengthh) {
 
 void handleRoom(const char* data, size_t lengthh) {
   Serial.println("Handling room");
+  Serial.println(data);
   char newData[lengthh + 4];
   char* stringBuffer[roomSize];
 
-  Serial.println("Handling room 2");
-
   strcpy(newData, data);
-
-  Serial.println("Handling room 3");
   
-  stringBuffer[0] = strtok(newData, "\n");
+  stringBuffer[0] = strtok(newData, "|");
   for (int i = 1; i < roomSize; i++) {
-    stringBuffer[i] = strtok(NULL, "\n");
+    stringBuffer[i] = strtok(NULL, "|");
   }
-
-  Serial.println("Handling room 4");
   
   for (int i = 0; i < roomSize; i++) {
-    Serial.println(i);
     if (stringBuffer[i] == NULL) {
       continue;
     }
@@ -272,8 +302,6 @@ void handleRoom(const char* data, size_t lengthh) {
     strcpy(names[i], strtok(NULL, "`"));
     sending[i] = atoi(strtok(NULL, "`")) == 1;
   }
-
-  Serial.println("Handling room 5");
 
   bool found = false;
   for (int i = 0; i < roomSize; i++) {
@@ -283,8 +311,6 @@ void handleRoom(const char* data, size_t lengthh) {
       found = true;
     }
   }
-
-  Serial.println("Handling room 6");
   
   if (!found) {
     Serial.println("No zap :(");
@@ -300,8 +326,6 @@ void handleRoom(const char* data, size_t lengthh) {
     Serial.print(" ");
     Serial.println(sending[i]);
   }
-
-  Serial.println("Handling room 7");
 }
 
 void initialScan(int n) {
