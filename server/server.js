@@ -2,12 +2,16 @@ const io = require('socket.io')(4098)
 
 let rooms = {}
 
+//Periodically send out refresh data
 setInterval(refresh, 10000)
 
+//When connected
 io.on('connection', (client) => {
 	console.log('Client joining!')
+	//When they register
 	client.on('register', function(msg) {
 		console.log("Adding to room")
+		//Parse data and save to the proper room
 		let info = msg.split(",")
 		if (!rooms[info[0]]) {
 			rooms[info[0]] = {}
@@ -17,7 +21,9 @@ io.on('connection', (client) => {
 			name: info[2],
 			broadcasting: false
 		}
+		//Add them to the room
 		client.join(info[0])
+		//Broadcast
 		io.in(info[0]).emit('room', formatRoom(rooms[info[0]]))
 		console.log(rooms)
 	})
@@ -25,6 +31,7 @@ io.on('connection', (client) => {
 	client.on('zap', function(msg) {
 		console.log("Zap request received")
 		let data = msg.split(',')
+		//Update data to reflect zap and broadcast
 		for (let i in rooms) {
 			if (rooms[i][client.id]) {
 				rooms[i][client.id].broadcasting = true
@@ -37,6 +44,7 @@ io.on('connection', (client) => {
 	client.on('unzap', function(msg) {
 		console.log("Zap request received")
 		let data = msg.split(',')
+		//Same as above but the opposite
 		for (let i in rooms) {
 			if (rooms[i][client.id]) {
 				rooms[i][client.id].broadcasting = false
@@ -46,6 +54,7 @@ io.on('connection', (client) => {
 		console.log(rooms)
 	})
 
+	//Remove client from rooms on disconnect
 	client.on('disconnect', function() {
 		console.log('Client leaving!')
 		for (let i in rooms) {
@@ -58,6 +67,7 @@ io.on('connection', (client) => {
 	})
 })
 
+//Turns a room object into a specific string representation
 function formatRoom(room) {
 	let toReturn = ""
 	for (let i in room) {
@@ -72,6 +82,7 @@ function formatRoom(room) {
 	return toReturn
 }
 
+//Broadcast each room
 function refresh() {
 	//console.log("Refreshing")
 	for (let i in rooms) {
